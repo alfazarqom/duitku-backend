@@ -50,8 +50,9 @@ Duitku's parameter table marks these Create Invoice body fields as required:
 | productDetails | string, up to 255 characters | Product/payment description |
 | email | string, up to 255 characters | Customer email |
 | callbackUrl | string, up to 255 characters | Server callback URL |
+| returnUrl | string, up to 255 characters | URL to which the customer is redirected after the transaction flow |
 
-The documentation lists optional fields including additionalParam, merchantUserInfo, customerVaName, phoneNumber, itemDetails, and customerDetail. Other documented objects and fields may depend on the feature used. Consult the current provider reference before adopting optional fields or tokenization-related features.
+The documentation lists optional fields including additionalParam, merchantUserInfo, customerVaName, phoneNumber, itemDetails, customerDetail, expiryPeriod, paymentMethod, and creditCardDetail. Requirements can be conditional on the payment channel: the POP reference notes customerDetail and itemDetails requirements for credit-card flows and customerVaName for E-Commerce. When itemDetails is used, paymentAmount must match the sum of its item amounts. Confirm the current channel-specific requirements before using optional or tokenization-related fields.
 
 Duitku's response documentation includes reference, paymentUrl, statusCode, and statusMessage. Duitku states that repeated requests using the same order ID can return the same response for five minutes. Concurrent or repeated requests may return errors such as “The transaction is still in progress” or “Amount is different please try again later.” This provider behavior does not replace merchant-side idempotency.
 
@@ -79,16 +80,21 @@ Documented callback fields include:
 | resultCode | Provider result code; see ambiguity below |
 | reference | Duitku reference; persist for reconciliation/tracking |
 | signature | HMAC signature to verify before accepting the notification |
-| productDetail, additionalParam, paymentCode, merchantUserId | Other documented callback fields |
-| bankRespCode, bankRespMsg, transactionState, transactionStateStatus, merchantCustomerId, tokenId, expiryDate, customerName | Additional fields documented for relevant payment flows; do not assume every callback includes them |
+| productDetail, additionalParam, paymentCode, merchantUserId, publisherOrderId | Other documented callback fields; Duitku recommends retaining its reference identifiers for tracking/reconciliation |
+| spUserHash, settlementDate, issuerCode, customerName, bankAppCode, bankOrderId, bankRespCode, bankRespMsg, cardName, cardType, maskedNumber, tokenId, transactionState, transactionStateStatus, merchantCustomerId, expiryDate | Additional fields documented for relevant payment flows; do not assume every callback includes them |
 
 Do not trust a callback merely because it reached a public URL. Verify its signature and match merchant code, merchant order ID, and amount to trusted transaction data before applying a state change. These are security requirements proposed for this integration based on the provider's signed callback contract.
 
 #### Important ambiguity: result codes
 
-The current POP reference's server callback parameter table says 00 = Success and 01 = Failed. Elsewhere on the same POP reference, the JavaScript popup callback describes 01 as pending and 02 as closing the popup without completing payment. The browser JavaScript callback and return/redirect parameters are explicitly not authoritative for updating server-side payment status.
+The official POP reference contains conflicting descriptions of result codes across different sections and flows:
 
-These are different flows and must not be conflated. This document does not infer that browser 01 or 02 meanings apply to the server-to-server callback. Confirm any unclear server callback result-code mapping against the current provider specification or Duitku support before finalizing it.
+- The HTTP Callback parameter table says `00 = Success` and `01 = Failed`.
+- The POP reference's **Errors → API Response → Callback** section is recorded in `docs/source-of-truth.md` as saying `00 = Success` and `02 = Failed`. Re-check that exact section in the current provider documentation before treating this as a settled contract.
+- The JavaScript popup callback describes `00` as success, `01` as pending, and `02` as the popup being closed without completing payment.
+- The general Duitku API redirect documentation describes `00` as success, `01` as pending, and `02` as canceled. The general API redirect contract must not automatically be applied to POP HTTP callbacks.
+
+These descriptions refer to different sections and/or flows and must not be conflated. Do not finalize the server-to-server callback mapping from browser callback or redirect meanings. Confirm the active HTTP Callback result-code mapping against the current POP reference and, if the conflict remains, obtain written confirmation from Duitku before production implementation. Until resolved, keep the mapping an explicit open decision.
 
 ### 2.3 Browser callback and return redirect
 
@@ -204,7 +210,7 @@ Before implementation, decide the stable HTTP status and response body for each 
 1. **Authentication:** Which functions use Supabase JWT verification, which are publicly reachable, and how are callers authorized inside each handler? A provider callback generally cannot supply a customer Supabase JWT; disabling gateway JWT verification does not remove the need for callback signature validation and transaction matching.
 2. **Order and amount source:** Confirm the active schema and authoritative source for order total, currency, payable state, and order ownership. Do not finalize database queries or RPC contracts until the actual schema is audited.
 3. **Guest checkout:** Decide how a guest is authorized to create an invoice and retrieve status without exposing another customer's order.
-4. **Result-code mapping:** Confirm server-to-server callback result-code meanings with the current Duitku reference/support; do not reuse JavaScript popup meanings.
+4. **Result-code mapping:** The POP HTTP Callback table and the POP Errors → API Response → Callback section are recorded with conflicting failure codes (01 versus 02); browser JS and general API redirect flows have their own meanings. Re-check the current official sections and obtain written confirmation from Duitku if the conflict remains. Do not reuse browser/redirect meanings for server-to-server callback processing.
 5. **Callback acknowledgement:** Define response status/body for valid callbacks, duplicates, invalid signatures, unknown orders, amount mismatches, and temporary database failures.
 6. **Idempotency and concurrency:** Define uniqueness constraints/transaction handling for invoice creation and callbacks, including repeated provider requests and duplicate/out-of-order notifications.
 7. **Payment state machine:** Approve allowed transitions and handling of conflicting, delayed, or repeated notifications.
